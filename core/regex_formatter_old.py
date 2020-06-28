@@ -1,26 +1,34 @@
+import base64
 import html
 import re
-import base64
 
 
 def format_content_html(content: str, allow_links: bool = False) -> str:
     # HTML-encode content
 
+    store = {}
+
     def encode_codeblock(m):
-        encoded = base64.b64encode(m.group(1).encode()).decode()
+        lang = m.group(1)
+        code = m.group(2)
+        encoded = base64.b64encode(m.group(0).encode()).decode()
+        store[encoded] = [lang, code]
         return "\x1AM" + encoded + "\x1AM"
 
-    # Encode multiline codeblocks (```text```)
-    content = re.sub(r"```+((?:[^`]*?\n)?(?:[^`]+))\n?```+", encode_codeblock, content)
+    # Encode multiline codeblocks (```text```) -> \x1AMblahblahblah\x1AM
+    content = re.sub(
+        r"(?:```)([a-z0-9_+\-.]+\n)?\s*(.+?)\s*```", encode_codeblock, content
+    )
 
     content = html.escape(content)
 
     def encode_inline_codeblock(m):
-        encoded = base64.b64encode(m.group(1).encode()).decode()
+        code = m.group(1)
+        encoded = base64.b64encode(m.group(2).encode()).decode()
         return "\x1AI" + encoded + "\x1AI"
 
-    # Encode inline codeblocks (`text`)
-    content = re.sub(r"`([^`]+)`", encode_inline_codeblock, content)
+    # Encode inline codeblocks (`text`) allows one or two ticks
+    content = re.sub(r"(`{1,2})([^`]+)(?:\1)(?![^`])", encode_inline_codeblock, content)
 
     # Encode links
     if allow_links:
@@ -47,16 +55,23 @@ def format_content_html(content: str, allow_links: bool = False) -> str:
     )
 
     # Process bold (**text**)
-    content = re.sub(r"(\*\*)(?=\S)(.+?[*_]*)(?<=\S)\1", r"<b>\2</b>", content)
+    content = re.sub(r"(\*\*)(.+?[*_]*)\1", r"<b>\2</b>", content)
 
     # Process underline (__text__)
     content = re.sub(r"(__)(?=\S)(.+?)(?<=\S)\1", r"<u>\2</u>", content)
 
     # Process italic (*text* or _text_)
-    content = re.sub(r"(\*|_)(?=\S)(.+?)(?<=\S)\1", r"<i>\2</i>", content)
+    content = re.sub(r"([*_])(?=\S)(.+?)(?<=\S)\1", r"<i>\2</i>", content)
 
     # Process strike through (~~text~~)
     content = re.sub(r"(~~)(?=\S)(.+?)(?<=\S)\1", r"<s>\2</s>", content)
+
+    # quotes (> text)
+    def process_quotes(m):
+        inner = "\n".join("<p>" + line + "</p>" for line in m.group)
+        return r"<blockquote>" + inner + r"<blockquote>"
+
+    content = re.sub(r"(?:> (.+)\n)+", process_quotes, content)
 
     def decode_inline_codeblock(m):
         decoded = base64.b64decode(m.group(1).encode()).decode()
@@ -96,7 +111,7 @@ def format_content_html(content: str, allow_links: bool = False) -> str:
             lang = lang.strip(" \n\r")
 
         result = html.escape(match.group(2))
-        return f'<div class="pre pre--multiline {lang}">{result}' "</div>"
+        return f'<div class="pre pre--multiline {lang}">{result}</div>'
 
     # Decode and process multiline codeblocks
     content = re.sub("\x1AM(.*?)\x1AM", decode_codeblock, content)
